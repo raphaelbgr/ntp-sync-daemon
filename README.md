@@ -33,7 +33,7 @@ pip install .
 Or install directly from GitHub:
 
 ```bash
-pip install git+https://github.com/rbgnr/ntp-sync-daemon.git
+pip install git+https://github.com/raphaelbgr/ntp-sync-daemon.git
 ```
 
 ## Usage

@@ -30,7 +30,7 @@ dependencies = [
 ntp-sync-daemon = "ntp_sync.daemon:main"
 
 [project.urls]
-Repository = "https://github.com/rbgnr/ntp-sync-daemon"
+Repository = "https://github.com/raphaelbgr/ntp-sync-daemon"
 
 [tool.setuptools.packages.find]
 include = ["ntp_sync*"]
