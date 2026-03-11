@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ntp-sync-daemon"
+version = "1.0.0"
+description = "Cross-platform NTP time synchronization daemon with round-robin redundancy"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Raphael Bernardo Gonzalez Nunes da Rocha" },
+]
+keywords = ["ntp", "time", "sync", "daemon", "clock"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Networking :: Time Synchronization",
+]
+dependencies = [
+    "ntplib>=0.4.0",
+]
+
+[project.scripts]
+ntp-sync-daemon = "ntp_sync.daemon:main"
+
+[project.urls]
+Repository = "https://github.com/rbgnr/ntp-sync-daemon"
+
+[tool.setuptools.packages.find]
+include = ["ntp_sync*"]

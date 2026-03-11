@@ -1,0 +1,15 @@
+[Unit]
+Description=NTP Sync Daemon - Round-robin time synchronization
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ntp-sync-daemon --verbose
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
