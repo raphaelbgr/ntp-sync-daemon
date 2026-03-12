@@ -30,15 +30,22 @@ def query_ntp(server: str, timeout: float = 5.0) -> float:
 def set_system_time(offset: float) -> None:
     """Adjust the system clock by the given offset (seconds).
 
+    NTP offset is relative to UTC (time.time()). Each platform's date command
+    expects local time, so we convert to the system's local timezone before
+    applying.
+
     Requires elevated privileges (root/admin).
     """
     now = time.time() + offset
-    dt = datetime.fromtimestamp(now, tz=timezone.utc)
+    # Local time — what the OS date commands expect
+    dt_local = datetime.fromtimestamp(now)
+    # UTC — for logging
+    dt_utc = datetime.fromtimestamp(now, tz=timezone.utc)
     system = platform.system()
 
     if system == "Darwin":
-        # macOS: use sntp or systemsetup
-        date_str = dt.strftime("%m%d%H%M%Y.%S")
+        # macOS date expects: MMDDhhmm[[CC]YY][.ss] in local time
+        date_str = dt_local.strftime("%m%d%H%M%Y.%S")
         subprocess.run(
             ["sudo", "-n", "date", date_str],
             check=True,
@@ -46,7 +53,7 @@ def set_system_time(offset: float) -> None:
         )
 
     elif system == "Linux":
-        date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+        date_str = dt_local.strftime("%Y-%m-%d %H:%M:%S")
         try:
             # Try timedatectl first (systemd)
             subprocess.run(
@@ -68,9 +75,9 @@ def set_system_time(offset: float) -> None:
             )
 
     elif system == "Windows":
-        # Windows: use w32tm or PowerShell
-        date_str = dt.strftime("%m-%d-%Y")
-        time_str = dt.strftime("%H:%M:%S")
+        # Windows Set-Date expects local time
+        date_str = dt_local.strftime("%m-%d-%Y")
+        time_str = dt_local.strftime("%H:%M:%S")
         subprocess.run(
             ["powershell", "-Command",
              f"Set-Date -Date '{date_str} {time_str}'"],
@@ -82,7 +89,8 @@ def set_system_time(offset: float) -> None:
         raise OSError(f"Unsupported platform: {system}")
 
     logger.info(
-        "System clock adjusted by %.6fs -> %s (UTC)",
+        "System clock adjusted by %.6fs -> %s (local) / %s (UTC)",
         offset,
-        dt.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        dt_local.strftime("%Y-%m-%d %H:%M:%S"),
+        dt_utc.strftime("%Y-%m-%d %H:%M:%S"),
     )
