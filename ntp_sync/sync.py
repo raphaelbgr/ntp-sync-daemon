@@ -75,12 +75,12 @@ def set_system_time(offset: float) -> None:
             )
 
     elif system == "Windows":
-        # Windows Set-Date expects local time
-        date_str = dt_local.strftime("%m-%d-%Y")
-        time_str = dt_local.strftime("%H:%M:%S")
+        # Use ISO 8601 format - unambiguous regardless of Windows locale
+        # Avoids MM-DD vs DD-MM misparse on non-English locales (e.g. pt-BR)
+        iso_str = dt_local.strftime("%Y-%m-%dT%H:%M:%S")
         subprocess.run(
             ["powershell", "-Command",
-             f"Set-Date -Date '{date_str} {time_str}'"],
+             f"Set-Date -Date '{iso_str}'"],
             check=True,
             capture_output=True,
         )
