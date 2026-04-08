@@ -340,3 +340,124 @@ class TestEdgeCases:
             set_system_time(0.0)
         date_arg = mock_run.call_args[0][0][-1]
         assert "T00:00:00" in date_arg
+
+
+# ---------------------------------------------------------------------------
+# Timezone / GMT handling
+# ---------------------------------------------------------------------------
+
+class TestTimezoneHandling:
+    """Verify the code passes LOCAL time to OS commands with no UTC indicator.
+
+    PowerShell Set-Date with no 'Z' suffix treats the string as local time.
+    With 'Z' it would treat it as UTC -- wrong on any non-UTC machine.
+    avell-i7 is UTC-3 (Brasilia): passing UTC would set the clock 3h off.
+    """
+
+    def test_windows_no_z_suffix(self):
+        """ISO string must NOT have a 'Z' suffix (would be parsed as UTC)."""
+        ts = _make_timestamp(2026, 4, 7, 12, 0, 0)
+        with patch("platform.system", return_value="Windows"), \
+             patch("time.time", return_value=ts), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            set_system_time(0.0)
+
+        date_arg = mock_run.call_args[0][0][-1]
+        assert not date_arg.endswith("Z'"), (
+            f"ISO string must not end with Z (UTC indicator): {date_arg}"
+        )
+        assert "Z'" not in date_arg
+
+    def test_windows_no_utc_offset_suffix(self):
+        """ISO string must NOT contain explicit UTC offset (+HH:MM / -HH:MM)."""
+        ts = _make_timestamp(2026, 4, 7, 12, 0, 0)
+        import re
+        with patch("platform.system", return_value="Windows"), \
+             patch("time.time", return_value=ts), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            set_system_time(0.0)
+
+        date_arg = mock_run.call_args[0][0][-1]
+        # Must not contain +HH:MM or -HH:MM after the time portion
+        assert not re.search(r'T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}', date_arg), (
+            f"ISO string must not have UTC offset suffix: {date_arg}"
+        )
+
+    def test_windows_uses_local_not_utc(self):
+        """dt_local (fromtimestamp) must be used, not dt_utc (utcfromtimestamp).
+
+        We freeze a known UTC timestamp and mock datetime.fromtimestamp to
+        return a local time with a 3h offset, verifying the local value
+        (not the UTC value) reaches the PowerShell command.
+        """
+        from unittest.mock import patch as mock_patch
+        from datetime import datetime as real_datetime
+
+        utc_ts = 1744027200.0  # some fixed UTC epoch
+        fake_local = real_datetime(2026, 4, 7, 9, 0, 0)   # UTC-3: local = UTC - 3h
+        fake_utc   = real_datetime(2026, 4, 7, 12, 0, 0)  # UTC value
+
+        with patch("platform.system", return_value="Windows"), \
+             patch("time.time", return_value=utc_ts), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            # fromtimestamp -> local; fromtimestamp(..., tz=utc) -> utc
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                fake_utc.replace(tzinfo=timezone.utc) if tz is not None else fake_local
+            )
+            set_system_time(0.0)
+
+        date_arg = mock_run.call_args[0][0][-1]
+        assert "T09:00:00" in date_arg, (
+            f"Expected local time 09:00 in command, not UTC 12:00. Got: {date_arg}"
+        )
+        assert "T12:00:00" not in date_arg, (
+            f"UTC time must NOT be passed to Set-Date. Got: {date_arg}"
+        )
+
+    def test_darwin_uses_local_not_utc(self):
+        """macOS date command also receives local time."""
+        from datetime import datetime as real_datetime
+
+        fake_local = real_datetime(2026, 4, 7, 9, 0, 0)
+        fake_utc   = real_datetime(2026, 4, 7, 12, 0, 0)
+
+        with patch("platform.system", return_value="Darwin"), \
+             patch("time.time", return_value=0.0), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                fake_utc.replace(tzinfo=timezone.utc) if tz is not None else fake_local
+            )
+            set_system_time(0.0)
+
+        date_str = mock_run.call_args[0][0][3]
+        # MMDDhhmm format from local 09:00: 04070900
+        assert date_str.startswith("0407"), f"Wrong date: {date_str}"
+        assert "0900" in date_str, f"Expected local 09:00, got: {date_str}"
+
+    def test_linux_uses_local_not_utc(self):
+        """Linux timedatectl set-time also receives local time."""
+        from datetime import datetime as real_datetime
+
+        fake_local = real_datetime(2026, 4, 7, 9, 0, 0)
+        fake_utc   = real_datetime(2026, 4, 7, 12, 0, 0)
+
+        with patch("platform.system", return_value="Linux"), \
+             patch("time.time", return_value=0.0), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                fake_utc.replace(tzinfo=timezone.utc) if tz is not None else fake_local
+            )
+            set_system_time(0.0)
+
+        calls = mock_run.call_args_list
+        set_time_call = next(c for c in calls if "set-time" in str(c[0][0]))
+        date_arg = set_time_call[0][0][-1]
+        assert "09:00:00" in date_arg, f"Expected local 09:00, got: {date_arg}"
