@@ -461,3 +461,159 @@ class TestTimezoneHandling:
         set_time_call = next(c for c in calls if "set-time" in str(c[0][0]))
         date_arg = set_time_call[0][0][-1]
         assert "09:00:00" in date_arg, f"Expected local 09:00, got: {date_arg}"
+
+
+# ---------------------------------------------------------------------------
+# Global timezone coverage
+# ---------------------------------------------------------------------------
+
+class TestGlobalTimezones:
+    """Parametrized across representative UTC offsets.
+
+    We mock datetime.fromtimestamp to simulate being in each timezone
+    WITHOUT changing the OS timezone.  The key assertion: whatever local
+    time fromtimestamp returns is exactly what reaches the OS command.
+
+    Timezones tested:
+      UTC-12:00  Baker Island (westernmost)
+      UTC-5:00   Eastern Standard Time (US/Canada)
+      UTC-3:30   Newfoundland (Canada) -- half-hour
+      UTC+0:00   UTC / GMT / London (winter)
+      UTC+1:00   Central Europe (winter)
+      UTC+3:30   Iran -- half-hour
+      UTC+5:30   India -- half-hour
+      UTC+5:45   Nepal -- quarter-hour
+      UTC+8:00   China / Australia (West)
+      UTC+9:30   Australia Central (South Australia) -- half-hour
+      UTC+13:45  Chatham Islands, NZ -- quarter-hour
+      UTC+14:00  Line Islands, Kiribati (easternmost)
+    """
+
+    # (offset_hours, offset_minutes, label)
+    UTC_OFFSETS = [
+        (-12,   0, "Baker Island UTC-12"),
+        ( -5,   0, "Eastern Standard UTC-5"),
+        ( -3, -30, "Newfoundland UTC-3:30"),
+        (  0,   0, "UTC/GMT UTC+0"),
+        (  1,   0, "Central Europe UTC+1"),
+        (  3,  30, "Iran UTC+3:30"),
+        (  5,  30, "India UTC+5:30"),
+        (  5,  45, "Nepal UTC+5:45"),
+        (  8,   0, "China UTC+8"),
+        (  9,  30, "Australia Central UTC+9:30"),
+        ( 13,  45, "Chatham Islands UTC+13:45"),
+        ( 14,   0, "Line Islands UTC+14"),
+    ]
+
+    @pytest.mark.parametrize("offset_h,offset_m,label", UTC_OFFSETS)
+    def test_windows_passes_local_time_for_timezone(self, offset_h, offset_m, label):
+        """Whatever fromtimestamp returns (local) is what PowerShell receives."""
+        from datetime import datetime as real_datetime
+
+        total_offset_seconds = (abs(offset_h) * 3600 + abs(offset_m) * 60)
+        if offset_h < 0 or (offset_h == 0 and offset_m < 0):
+            total_offset_seconds = -total_offset_seconds
+
+        utc_ts = 1744027200.0  # 2026-04-07 12:00:00 UTC (fixed reference)
+        local_ts = utc_ts + total_offset_seconds
+        local_dt = real_datetime.fromtimestamp(local_ts, tz=timezone.utc).replace(tzinfo=None)  # naive local for this tz
+        expected_time = local_dt.strftime("%H:%M:%S")
+        expected_date = local_dt.strftime("%Y-%m-%d")
+
+        with patch("platform.system", return_value="Windows"), \
+             patch("time.time", return_value=utc_ts), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                local_dt.replace(tzinfo=timezone.utc) if tz is not None else local_dt
+            )
+            set_system_time(0.0)
+
+        date_arg = mock_run.call_args[0][0][-1]
+        assert expected_time in date_arg, (
+            f"[{label}] Expected local time {expected_time}, got: {date_arg}"
+        )
+        assert expected_date in date_arg, (
+            f"[{label}] Expected local date {expected_date}, got: {date_arg}"
+        )
+
+    @pytest.mark.parametrize("offset_h,offset_m,label", UTC_OFFSETS)
+    def test_linux_passes_local_time_for_timezone(self, offset_h, offset_m, label):
+        from datetime import datetime as real_datetime
+
+        total_offset_seconds = (abs(offset_h) * 3600 + abs(offset_m) * 60)
+        if offset_h < 0 or (offset_h == 0 and offset_m < 0):
+            total_offset_seconds = -total_offset_seconds
+
+        utc_ts = 1744027200.0
+        local_ts = utc_ts + total_offset_seconds
+        local_dt = real_datetime.fromtimestamp(local_ts, tz=timezone.utc).replace(tzinfo=None)
+        expected = local_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        with patch("platform.system", return_value="Linux"), \
+             patch("time.time", return_value=utc_ts), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                local_dt.replace(tzinfo=timezone.utc) if tz is not None else local_dt
+            )
+            set_system_time(0.0)
+
+        calls = mock_run.call_args_list
+        set_time_call = next(c for c in calls if "set-time" in str(c[0][0]))
+        date_arg = set_time_call[0][0][-1]
+        assert date_arg == expected, (
+            f"[{label}] Expected '{expected}', got: '{date_arg}'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# DST transition cases
+# ---------------------------------------------------------------------------
+
+class TestDSTTransitions:
+    """DST transitions are handled by Python's datetime.fromtimestamp() via the
+    OS timezone database.  These tests verify the code survives the boundary
+    and passes whatever local time fromtimestamp resolves.
+    """
+
+    def test_dst_spring_forward_windows(self):
+        """Spring-forward: 01:59 -> 03:00 (the 02:xx hour doesn't exist locally).
+        fromtimestamp handles this; we just verify the result reaches PowerShell.
+        """
+        from datetime import datetime as real_datetime
+        # Simulate fromtimestamp returning 03:00 (post-spring-forward)
+        post_dst = real_datetime(2026, 3, 8, 3, 0, 0)  # US spring-forward
+
+        with patch("platform.system", return_value="Windows"), \
+             patch("time.time", return_value=0.0), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                post_dst.replace(tzinfo=timezone.utc) if tz is not None else post_dst
+            )
+            set_system_time(0.0)
+
+        date_arg = mock_run.call_args[0][0][-1]
+        assert "2026-03-08T03:00:00" in date_arg
+
+    def test_dst_fall_back_windows(self):
+        """Fall-back: 02:00 repeats. fromtimestamp resolves via OS; code passes it."""
+        from datetime import datetime as real_datetime
+        fall_back = real_datetime(2026, 11, 1, 1, 30, 0)  # ambiguous hour
+
+        with patch("platform.system", return_value="Windows"), \
+             patch("time.time", return_value=0.0), \
+             patch("ntp_sync.sync.datetime") as mock_dt, \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_dt.fromtimestamp.side_effect = lambda ts, tz=None: (
+                fall_back.replace(tzinfo=timezone.utc) if tz is not None else fall_back
+            )
+            set_system_time(0.0)
+
+        date_arg = mock_run.call_args[0][0][-1]
+        assert "2026-11-01T01:30:00" in date_arg
